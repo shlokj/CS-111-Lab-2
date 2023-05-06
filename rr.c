@@ -21,6 +21,10 @@ struct process
   TAILQ_ENTRY(process) pointers;
 
   /* Additional fields here */
+  u32 remaining_time;
+  u32 last_preempted_at;
+  u32 waiting_time;
+  u32 response_time;
   /* End of "Additional fields here" */
 };
 
@@ -160,6 +164,85 @@ int main(int argc, char *argv[])
   u32 total_response_time = 0;
 
   /* Your code here */
+
+  for (u32 i = 0; i < size; i++) {
+    data[i].remaining_time = data[i].burst_time;
+    data[i].waiting_time = 0;
+    data[i].response_time = -1; // although this is a u32, this value is used to identify whether it has been assigned yet
+    data[i].last_preempted_at = -1; // same for this
+  }
+
+  // sort the processes
+  for (u32 i = 0; i < size - 1; i++) {
+    for (u32 j = i + 1; j < size; j++) {
+      if (data[i].arrival_time > data[j].arrival_time || 
+          (data[i].arrival_time == data[j].arrival_time && data[i].pid > data[j].pid)) {
+        struct process temp = data[i];
+        data[i] = data[j];
+        data[j] = temp;
+      }
+    }
+  }
+
+  u32 cur_time = 0;
+  u32 processes_completed = 0;
+  u32 data_idx = 0;
+
+  struct process *cur_proc = NULL;
+  u32 slice_time_used = 0;
+  while (!TAILQ_EMPTY(&list) || processes_completed < size) {
+    // simulating time - has a new processes arrived to be queued?
+    while (data_idx < size && data[data_idx].arrival_time <= cur_time) { // this should be done using a loop since processes might arrive at the same time
+      // add to queue
+      TAILQ_INSERT_TAIL(&list, &(data[data_idx]), pointers);
+      data_idx++;
+    }
+
+    if (cur_proc != NULL && cur_proc->remaining_time > 0) {
+      cur_proc->remaining_time--;
+      slice_time_used++;
+    }
+
+    if (cur_proc == NULL || cur_proc->remaining_time == 0) {
+      if (cur_proc != NULL) { // don't want to increment if we're sitting idle
+        processes_completed++;
+      }
+      slice_time_used = 0;
+      if (!TAILQ_EMPTY(&list)) {
+        cur_proc = TAILQ_FIRST(&list);
+        TAILQ_REMOVE(&list, cur_proc, pointers); // remove it from the waiting queue
+        if (cur_proc->response_time == -1) { // if response time is 0, it hasn't been assigned yet
+          cur_proc->response_time = cur_time - cur_proc->arrival_time;
+          cur_proc->waiting_time += cur_proc->response_time;
+        }
+        else {
+          cur_proc->waiting_time += cur_time - cur_proc->last_preempted_at;
+        }
+      }
+    }
+
+    else if (slice_time_used == quantum_length && cur_proc->remaining_time > 0) {
+      // add cur proc to the end of the queue and bring in the one at the front
+      cur_proc->last_preempted_at = cur_time;
+      TAILQ_INSERT_TAIL(&list, cur_proc, pointers); // move current process to end
+      cur_proc = TAILQ_FIRST(&list);
+      TAILQ_REMOVE(&list, cur_proc, pointers);
+      if (cur_proc->last_preempted_at != -1) {
+        cur_proc->waiting_time += cur_time - cur_proc->last_preempted_at;
+      }
+      if (cur_proc->response_time == -1) { // if response time is 0, it hasn't been assigned yet
+        cur_proc->response_time = cur_time - cur_proc->arrival_time;
+        cur_proc->waiting_time = cur_proc->response_time; 
+      }
+      slice_time_used = 0;
+    }
+    cur_time += 1;
+  }
+
+  for (u32 i = 0; i < size; i++) {
+    total_response_time += data[i].response_time;
+    total_waiting_time += data[i].waiting_time;
+  }
   /* End of "Your code here" */
 
   printf("Average waiting time: %.2f\n", (float)total_waiting_time / (float)size);
